@@ -1,6 +1,7 @@
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Float32
+from std_srvs.srv import Trigger
 
 
 class MonitorNode(Node):
@@ -12,7 +13,9 @@ class MonitorNode(Node):
             self.battery_callback,
             10
         )
+        self.client = self.create_client(Trigger, '/recharge')
         self.was_low = False
+        self.recharge_in_progress = False
 
     def battery_callback(self, msg: Float32):
         level = msg.data
@@ -24,6 +27,25 @@ class MonitorNode(Node):
         elif self.was_low:
             self.get_logger().info('Pil seviyesi normal düzeye döndü, uyarı sona erdi.')
             self.was_low = False
+
+        if level < 5.0 and not self.recharge_in_progress:
+            if self.client.service_is_ready():
+                self.recharge_in_progress = True
+                self.get_logger().info('Pil %5 altına indi, /recharge servisi çağrılıyor...')
+                future = self.client.call_async(Trigger.Request())
+                future.add_done_callback(self.recharge_response_callback)
+            else:
+                self.get_logger().warn('/recharge servisi henüz hazır değil.')
+
+    def recharge_response_callback(self, future):
+        self.recharge_in_progress = False
+        try:
+            response = future.result()
+            self.get_logger().info(
+                f'Servis cevabı (success={response.success}): {response.message}'
+            )
+        except Exception as e:
+            self.get_logger().error(f'Servis çağrısı başarısız: {e}')
 
 
 def main(args=None):
